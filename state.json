@@ -1,4 +1,6 @@
 {
-  "keys": [],
-  "updated_at": "2026-09-25T06:24:20.949228+00:00"
+  "initialized": false,
+  "active_keys": [],
+  "seen_keys": [],
+  "updated_at": null
 }
