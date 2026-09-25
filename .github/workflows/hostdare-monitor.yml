@@ -1,22 +1,22 @@
-name: HostDare CN2 GIA Deal Monitor
+name: CN2 GIA Multi-Provider Deal Monitor
 
 "on":
   schedule:
-    - cron: "11,41 * * * *"
+    - cron: "7,37 * * * *"
   workflow_dispatch: {}
 
 permissions:
   contents: write
 
 concurrency:
-  group: hostdare-cn2-monitor
+  group: cn2-gia-multi-provider-monitor
   cancel-in-progress: false
 
 jobs:
   monitor:
-    name: "HostDare CN2 GIA monitor"
+    name: "HostDare + DMIT + BandwagonHost"
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 6
 
     steps:
       - name: Checkout
@@ -33,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Check HostDare
+      - name: Check CN2 GIA deals
         id: check
         shell: bash
         run: |
@@ -43,7 +43,7 @@ jobs:
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
           exit 0
 
-      - name: Persist state
+      - name: Persist monitor state
         shell: bash
         run: |
           MONTH="$(date -u +%Y-%m)"
@@ -55,7 +55,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add state.json .heartbeat
-            git commit -m "chore: update HostDare monitor state [skip ci]"
+            git commit -m "chore: update CN2 GIA monitor state [skip ci]"
             git push
           else
             echo "No state change."
@@ -65,22 +65,27 @@ jobs:
         if: steps.check.outputs.code == '42'
         shell: bash
         run: |
-          echo "::error title=HostDare CN2 GIA DEAL FOUND::New >=30% official deal or CSSD1/CAMD1 restock detected. Open the workflow summary."
+          echo "::error title=CN2 GIA DEAL FOUND::A NEW qualifying HostDare / DMIT / BandwagonHost offer was detected. Open the workflow Summary."
           exit 1
 
-      - name: Monitor summary
+      - name: Write monitor summary
         if: always()
         shell: bash
         run: |
           {
-            echo "## HostDare CN2 GIA Monitor v1.1.1"
+            echo "## CN2 GIA Multi-Provider Monitor v2.0.0"
             echo ""
-            echo "- First healthy run = baseline only, no historical alert"
-            echo "- Primary: official RSS promotion feed"
-            echo "- Alert A: NEW CN2/CN2 GIA official promotion >= 30%"
-            echo "- Alert B: NEW CSSD1/CAMD1 restock, only when product page is readable"
-            echo "- Cloudflare 403 does **not** mean out of stock"
-            echo "- Check result code: \`${{ steps.check.outputs.code }}\`"
+            echo "**Providers:** HostDare + DMIT + BandwagonHost"
+            echo ""
+            echo "**Hard filter:**"
+            echo "- CN2 GIA / CTGNet"
+            echo "- RAM >= 1 GB"
+            echo "- Dedicated IPv4"
+            echo "- Annual price <= \$50"
+            echo ""
+            echo "- First healthy run creates baseline and never sends a historical alert."
+            echo "- Cloudflare / unreadable pages never mean out of stock."
+            echo "- Result code: \`${{ steps.check.outputs.code }}\`"
             echo ""
             if [ -f last_check.json ]; then
               echo '```json'
