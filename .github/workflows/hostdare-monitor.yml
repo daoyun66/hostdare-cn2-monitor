@@ -1,8 +1,9 @@
 name: HostDare CN2 GIA Deal Monitor
-on:
+
+"on":
   schedule:
     - cron: "11,41 * * * *"
-  workflow_dispatch:
+  workflow_dispatch: {}
 permissions:
   contents: write
 concurrency:
