@@ -1,12 +1,12 @@
-# CN2 GIA Multi-Provider Deal Monitor v2.1.0
+# CN2 GIA Multi-Provider Deal Monitor v2.2.0 Stable
 
-监控：
+统一监控：
 
 - HostDare
 - DMIT
-- BandwagonHost / 搬瓦工
+- BandwagonHost（搬瓦工）
 
-硬门槛：
+硬条件固定：
 
 ```text
 CN2 GIA / CTGNet
@@ -15,68 +15,124 @@ RAM >= 1GB
 年付 <= $50
 ```
 
-## v2.1.0：DMIT 补强
+## v2.2.0 重点：DMIT 做到底
 
-v2.0.0 中 GitHub Actions 访问 DMIT pricing 页面可能遇到：
+GitHub Actions 的共享出口 IP 经常被 DMIT Cloudflare 403。
 
-```text
-403
-Cloudflare / anti-bot challenge
-```
+这一版采用三层结构：
 
-v2.1.0 不再只依赖一个 DMIT URL，而是同时检查多个 **DMIT 官方页面**：
+### 第一层：DMIT 官方直读
 
-```text
-https://www.dmit.io/pages/pricing
-https://www.dmit.io/pages/pricing?language=english
-https://www.dmit.io/pages/location/los-angeles
-https://www.dmit.io/pages/location/los-angeles?language=english
-https://www.dmit.io/index.php?rp=/announcements
-```
-
-任一官方源能读，就可以继续工作。
-
-如果全部被 Cloudflare 挡住：
+同时检查多个官方页面：
 
 ```text
-不判无货
-不清空 DMIT 状态
-不制造“恢复访问 = 假补货”的误报
+pricing
+pricing?language=english
+Los Angeles location
+Los Angeles location?language=english
+announcements
+cloud-instance
+christmas-2026
+black-friday-2026
+lax-eyeball
 ```
 
-## 特别防止 DMIT Tier 1 误报
+只要任意官方页面能读，就以官方直读为准。
 
-DMIT 官方目前同时存在：
+### 第二层：官方活动页
+
+对当前年份的典型官方促销页也主动检查。
+
+如果未来 DMIT 把低价 Pro Special 放进活动页，只要页面同时确认：
 
 ```text
-Premium Network -> CN2 GIA
-Tier 1 Network -> 非中国优化
-Eyeball Network -> 不是 CN2 GIA Premium
+Pro / Premium
+CN2 GIA / CTGNet
+RAM >= 1GB
+1 IPv4
+annual <= $50
+Order Now / Available
 ```
 
-例如：
+就成为 VERIFIED 命中。
+
+### 第三层：搜索索引兜底
+
+只有当所有 DMIT 官方页面都被 403/不可读时才启用。
+
+使用 Bing RSS 做站内发现，但有严格约束：
+
+- 搜索结果链接必须回到 `dmit.io`
+- Tier 1 / `.T1.` 一律排除
+- 必须在摘要里同时找到：
+  - Pro / Premium / CN2 GIA
+  - RAM >= 1GB
+  - 1 IPv4
+  - 年付 <= $50
+- 明确写着 promotion ended / closed 的旧活动不提醒
+
+这类命中标记：
 
 ```text
-LAX.AS3.T1 WEE
-$36.90/year
-1GB
+confidence: candidate
 ```
 
-价格虽然符合 <= $50，但它是 **Tier 1**，不是 CN2 GIA。
+它会发邮件，但购买前必须打开官方 DMIT URL 再确认库存。
 
-v2.1.0 会先按网络区块拆分，只允许 **Premium Network** 区块进入 CN2 GIA 候选。
+直接官方页面确认的命中标记：
 
-## GitHub Actions 更新
+```text
+confidence: verified
+```
 
-使用：
+## 为什么不把搜索结果直接当 VERIFIED
+
+因为搜索索引可能有缓存延迟。
+
+所以：
+
+```text
+VERIFIED  = 官方页面直接确认
+CANDIDATE = GitHub 访问官方被 Cloudflare 挡住时的低漏报兜底
+```
+
+这样兼顾“不漏活动”和“不把搜索缓存冒充实时库存”。
+
+## HostDare
+
+继续使用官方 RSS + 产品页。
+
+## BandwagonHost
+
+继续使用官方购物车，只接受 CN2 GIA + 1GB+ + IPv4 + <= $50/year 的可购买产品。
+
+## 防误报
+
+- Cloudflare 403 永远不代表无货
+- Provider 不可读时保留 last-known-good 状态
+- Tier 1 不会当 CN2 GIA
+- 第一次运行只建立基线
+- 历史搜索结果第一次只登记、不报警
+
+## GitHub Actions
+
+固定：
 
 ```text
 ubuntu-24.04
 actions/checkout@v5
 actions/setup-python@v6
+Python 3.12
 ```
 
-避免旧 Node.js 20 Action 的弃用提示，并固定 runner，不跟随 `ubuntu-latest` 自动迁移。
+每小时：
+
+```text
+07 分
+37 分
+```
+
+检查两次。
 
 ## 升级
 
@@ -84,37 +140,37 @@ actions/setup-python@v6
 
 ```text
 monitor.py
-requirements.txt
 README.md
+requirements.txt
 .github/workflows/hostdare-monitor.yml
 ```
 
-### state.json
+已有 v2.1.0 的 `state.json` 可以保留。
 
-如果你的 v2.0.0 已经跑通，可以保留旧 `state.json`；v2.1.0 会自动补充新字段。
+如果想从 v2.2.0 重新建立基线，也可以覆盖包内 `state.json`。
 
-如果想重新建立三商家基线，可以覆盖本包的 `state.json`。
-
-第一次：
+## 正常状态
 
 ```text
 Success
-baseline_mode: true
-baseline_created: true
-```
-
-第二次：
-
-```text
-Success
-baseline_mode: false
 new_hits: []
 ```
 
-真正发现符合条件的新货：
+真正出现新货/候选：
 
 ```text
-exit 42
-Workflow Failure
-GitHub Actions 原生邮件
+Failure
+GitHub 原生 Email
+```
+
+Summary 里会明确告诉你：
+
+```text
+confidence = verified
+```
+
+还是：
+
+```text
+confidence = candidate
 ```

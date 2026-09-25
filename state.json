@@ -1,11 +1,6 @@
 {
-  "initialized": true,
-  "active_keys": [],
+  "initialized": false,
   "seen_keys": [],
-  "provider_active": {
-    "HostDare": [],
-    "DMIT": [],
-    "BandwagonHost": []
-  },
-  "updated_at": "2026-09-25T10:21:01.756193+00:00"
+  "provider_active": {},
+  "updated_at": null
 }
