@@ -2,7 +2,6 @@ name: HostDare CN2 GIA Deal Monitor
 
 "on":
   schedule:
-    # UTC xx:11 / xx:41, about every 30 minutes.
     - cron: "11,41 * * * *"
   workflow_dispatch: {}
 
@@ -74,11 +73,12 @@ jobs:
         shell: bash
         run: |
           {
-            echo "## HostDare CN2 GIA Monitor v1.1.0"
+            echo "## HostDare CN2 GIA Monitor v1.1.1"
             echo ""
+            echo "- First healthy run = baseline only, no historical alert"
             echo "- Primary: official RSS promotion feed"
-            echo "- Alert A: CN2/CN2 GIA official promotion >= 30%"
-            echo "- Alert B: CSSD1/CAMD1 restock, only when product page is readable"
+            echo "- Alert A: NEW CN2/CN2 GIA official promotion >= 30%"
+            echo "- Alert B: NEW CSSD1/CAMD1 restock, only when product page is readable"
             echo "- Cloudflare 403 does **not** mean out of stock"
             echo "- Check result code: \`${{ steps.check.outputs.code }}\`"
             echo ""
