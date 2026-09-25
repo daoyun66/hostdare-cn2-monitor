@@ -1,10 +1,10 @@
-# CN2 GIA Multi-Provider Deal Monitor v2.0.0
+# CN2 GIA Multi-Provider Deal Monitor v2.1.0
 
-统一监控：
+监控：
 
 - HostDare
 - DMIT
-- BandwagonHost（搬瓦工）
+- BandwagonHost / 搬瓦工
 
 硬门槛：
 
@@ -12,89 +12,73 @@
 CN2 GIA / CTGNet
 RAM >= 1GB
 独立 IPv4
-年付 <= $50 USD
+年付 <= $50
 ```
 
-符合条件的新活动或补货出现时：
+## v2.1.0：DMIT 补强
+
+v2.0.0 中 GitHub Actions 访问 DMIT pricing 页面可能遇到：
 
 ```text
-monitor.py -> exit code 42
-GitHub Actions -> 故意 Failure
-GitHub -> 原生 Actions 失败邮件通知
+403
+Cloudflare / anti-bot challenge
 ```
 
-## 重要：首次运行
-
-第一次健康运行只建立基线，不报警：
-
-```text
-baseline_mode: true
-baseline_created: true
-new_hits: []
-```
-
-第二次开始才真正监控新货。
-
-## 数据源策略
-
-### HostDare
-
-主源：
-
-```text
-https://bill.hostdare.com/announcements/rss
-```
-
-只分析最近 45 天的官方公告，避免把旧的 2025/2026 历史促销重新当成新活动。
-
-产品页只用于健康/库存辅助。GitHub Actions 被 Cloudflare 403 时不会判成无货。
-
-### DMIT
-
-只读取官方：
+v2.1.0 不再只依赖一个 DMIT URL，而是同时检查多个 **DMIT 官方页面**：
 
 ```text
 https://www.dmit.io/pages/pricing
+https://www.dmit.io/pages/pricing?language=english
+https://www.dmit.io/pages/location/los-angeles
+https://www.dmit.io/pages/location/los-angeles?language=english
+https://www.dmit.io/index.php?rp=/announcements
 ```
 
-特别做了防误报：
+任一官方源能读，就可以继续工作。
 
-**LAX.AS3.T1 / Tier 1 这种普通线路不会因为价格低于 $50 而报警。**
-
-只有同一个本地价格区块明确确认：
+如果全部被 Cloudflare 挡住：
 
 ```text
-CN2 GIA / CTGNet
-+ dedicated IPv4
-+ >=1GB RAM
-+ <=$50/year
+不判无货
+不清空 DMIT 状态
+不制造“恢复访问 = 假补货”的误报
 ```
 
-才进入候选。
+## 特别防止 DMIT Tier 1 误报
 
-### BandwagonHost
-
-只读取官方购物车：
+DMIT 官方目前同时存在：
 
 ```text
-https://bandwagonhost.com/cart.php
+Premium Network -> CN2 GIA
+Tier 1 Network -> 非中国优化
+Eyeball Network -> 不是 CN2 GIA Premium
 ```
 
-只有官方页面同时确认：
+例如：
 
 ```text
-CN2 GIA
-dedicated IPv4
-RAM >= 1GB
-annual <= $50
-orderable
+LAX.AS3.T1 WEE
+$36.90/year
+1GB
 ```
 
-才报警。
+价格虽然符合 <= $50，但它是 **Tier 1**，不是 CN2 GIA。
 
-这可以抓未来突然出现的 Limited Edition / SPECIAL 低价货，同时避免拿第三方“库存站”作为最终证据。
+v2.1.0 会先按网络区块拆分，只允许 **Premium Network** 区块进入 CN2 GIA 候选。
 
-## 升级你现有 hostdare-cn2-monitor 仓库
+## GitHub Actions 更新
+
+使用：
+
+```text
+ubuntu-24.04
+actions/checkout@v5
+actions/setup-python@v6
+```
+
+避免旧 Node.js 20 Action 的弃用提示，并固定 runner，不跟随 `ubuntu-latest` 自动迁移。
+
+## 升级
 
 覆盖：
 
@@ -103,40 +87,34 @@ monitor.py
 requirements.txt
 README.md
 .github/workflows/hostdare-monitor.yml
-state.json
 ```
 
-建议这次 **state.json 也覆盖**，因为 v2.0.0 是新的三商家统一状态格式。
+### state.json
 
-覆盖后：
+如果你的 v2.0.0 已经跑通，可以保留旧 `state.json`；v2.1.0 会自动补充新字段。
 
-1. GitHub -> Actions
-2. 打开 `CN2 GIA Multi-Provider Deal Monitor`
-3. `Run workflow`
-4. 第一次应为绿色 Success（建立基线）
-5. 再运行一次，正常仍为绿色 Success
+如果想重新建立三商家基线，可以覆盖本包的 `state.json`。
 
-真正出现新货时才会红色 Failure + 邮件。
-
-## GitHub 邮件
-
-确保：
+第一次：
 
 ```text
-GitHub -> Settings -> Notifications -> System -> Actions
-Email
-Failed workflows only
+Success
+baseline_mode: true
+baseline_created: true
 ```
 
-已开启。
-
-## 监控频率
-
-每小时两次：
+第二次：
 
 ```text
-07 分
-37 分
+Success
+baseline_mode: false
+new_hits: []
 ```
 
-即约每 30 分钟检查一次。
+真正发现符合条件的新货：
+
+```text
+exit 42
+Workflow Failure
+GitHub Actions 原生邮件
+```

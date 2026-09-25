@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-CN2 GIA Multi-Provider Monitor v2.0.0
+CN2 GIA Multi-Provider Monitor v2.1.0
 
 Providers:
 - HostDare
@@ -10,17 +10,23 @@ Providers:
 - BandwagonHost
 
 Hard criteria:
-- CN2 GIA / CTGNet confirmed by the same official source
+- CN2 GIA / CTGNet confirmed by official source
 - RAM >= 1 GB
 - Dedicated IPv4
 - Annual price <= 50 USD
-- Offer is currently orderable / newly announced
+- Currently orderable / newly announced
 
-Safety:
-- Official domains only
-- Cloudflare / unreadable pages never mean "out of stock"
-- First healthy run establishes a baseline and does not alert
-- Later new qualifying offers return exit code 42
+v2.1.0 highlights:
+- DMIT multi-source official fallback:
+  * pricing
+  * pricing?language=english
+  * Los Angeles datacenter page
+  * Los Angeles page?language=english
+  * announcements
+- DMIT network-section parser prevents Tier 1 WEE ($36.90/yr) false positive.
+- Last-known-good DMIT snapshot preserved while all DMIT sources are blocked.
+- Provider/source health matrix in Summary.
+- GitHub Actions upgraded to checkout@v5 / setup-python@v6 and ubuntu-24.04.
 """
 
 from __future__ import annotations
@@ -39,8 +45,7 @@ from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 
-VERSION = "2.0.0"
-
+VERSION = "2.1.0"
 MAX_ANNUAL_USD = 50.00
 MIN_RAM_MB = 1024
 RECENT_ANNOUNCEMENT_DAYS = 45
@@ -62,22 +67,23 @@ SOURCES = {
     "hostdare_rss": "https://bill.hostdare.com/announcements/rss",
     "hostdare_cssd": "https://bill.hostdare.com/store/premium-china-optimized-nvme-kvm",
     "hostdare_camd": "https://bill.hostdare.com/store/premium-china-optimized-amd-kvm-vps-usa",
+
     "dmit_pricing": "https://www.dmit.io/pages/pricing",
+    "dmit_pricing_en": "https://www.dmit.io/pages/pricing?language=english",
+    "dmit_lax": "https://www.dmit.io/pages/location/los-angeles",
+    "dmit_lax_en": "https://www.dmit.io/pages/location/los-angeles?language=english",
+    "dmit_announcements": "https://www.dmit.io/index.php?rp=%2Fannouncements",
+
     "bandwagon_cart": "https://bandwagonhost.com/cart.php",
 }
 
 ALLOWED_HOSTS = {
     "bill.hostdare.com",
-    "www.dmit.io",
-    "dmit.io",
-    "bandwagonhost.com",
-    "www.bandwagonhost.com",
+    "www.dmit.io", "dmit.io",
+    "bandwagonhost.com", "www.bandwagonhost.com",
 }
 
-# HostDare product families known to include one dedicated IPv4 on their official product pages.
-# We still require the announcement/product text to confirm CN2 GIA and the price/RAM.
 HOSTDARE_DEDICATED_IPV4_FAMILIES = ("CSSD", "CAMD", "CKVM")
-
 
 @dataclass(frozen=True)
 class Offer:
@@ -97,31 +103,23 @@ class Offer:
     @property
     def key(self) -> str:
         raw = "|".join([
-            self.provider,
-            self.plan,
-            f"{self.annual_usd:.2f}",
-            self.coupon,
-            self.url,
+            self.provider, self.plan, f"{self.annual_usd:.2f}",
+            self.coupon, self.url
         ])
         return "offer:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
     def qualifies(self) -> bool:
         return (
-            self.cn2_gia
-            and self.dedicated_ipv4
-            and self.orderable
+            self.cn2_gia and self.dedicated_ipv4 and self.orderable
             and self.ram_mb >= MIN_RAM_MB
             and self.annual_usd <= MAX_ANNUAL_USD
         )
 
-
-def now_utc() -> datetime:
+def now_utc():
     return datetime.now(timezone.utc)
 
-
-def now_iso() -> str:
+def now_iso():
     return now_utc().isoformat()
-
 
 def allowed_url(url: str) -> bool:
     try:
@@ -129,59 +127,44 @@ def allowed_url(url: str) -> bool:
     except Exception:
         return False
 
-
 def normalize_text(raw_html: str) -> str:
     soup = BeautifulSoup(raw_html, "html.parser")
     return re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
 
-
 def blocked_by_cloudflare(status: int, body: str, title: str = "") -> bool:
-    low = (title + " " + body[:4000]).lower()
-    markers = (
-        "just a moment",
-        "cloudflare",
-        "attention required",
-        "checking your browser",
-        "cf-chl-",
+    low = (title + " " + body[:5000]).lower()
+    return (
+        status in (403, 429, 503)
+        and any(x in low for x in (
+            "just a moment", "cloudflare", "attention required",
+            "checking your browser", "cf-chl-"
+        ))
     )
-    return status in (403, 429, 503) and any(x in low for x in markers)
 
-
-def fetch(url: str, timeout: int = 25) -> dict:
+def fetch(url: str, timeout=25) -> dict:
     result = {
-        "url": url,
-        "ok": False,
-        "blocked": False,
-        "status": None,
-        "final_url": url,
-        "title": "",
-        "text": "",
-        "html": "",
-        "error": None,
+        "url": url, "ok": False, "blocked": False, "status": None,
+        "final_url": url, "title": "", "text": "", "html": "",
+        "error": None
     }
     if not allowed_url(url):
         result["error"] = "URL host is not allowlisted"
         return result
-
     try:
         r = requests.get(url, headers=HEADERS, timeout=timeout, allow_redirects=True)
         result["status"] = r.status_code
         result["final_url"] = r.url
-
         soup = BeautifulSoup(r.text, "html.parser")
         title = soup.title.get_text(" ", strip=True) if soup.title else ""
         text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
         result["title"] = title
-
         if blocked_by_cloudflare(r.status_code, text, title):
             result["blocked"] = True
             result["error"] = "Cloudflare / anti-bot challenge"
             return result
-
         if r.status_code != 200:
             result["error"] = f"HTTP {r.status_code}"
             return result
-
         result["ok"] = True
         result["text"] = text
         result["html"] = r.text
@@ -190,16 +173,15 @@ def fetch(url: str, timeout: int = 25) -> dict:
         result["error"] = f"{type(e).__name__}: {e}"
         return result
 
-
-def parse_usd_annual(text: str) -> list[float]:
+def parse_usd_annual(text: str):
     vals = []
-    patterns = [
+    pats = (
         r"\$\s*(\d+(?:\.\d{1,2})?)\s*(?:USD\s*)?[/ ]\s*(?:year|yr|annually)",
         r"\$\s*(\d+(?:\.\d{1,2})?)\s*USD\s*(?:/year|annually)",
         r"(\d+(?:\.\d{1,2})?)\s*USD\s*(?:/year|annually)",
-        r"\$\s*(\d+(?:\.\d{1,2})?)\s*USD\s*Annually",
-    ]
-    for pat in patterns:
+        r"\$\s*(\d+(?:\.\d{1,2})?)\s*/\s*Annually",
+    )
+    for pat in pats:
         for m in re.finditer(pat, text, re.I):
             try:
                 vals.append(float(m.group(1)))
@@ -207,69 +189,47 @@ def parse_usd_annual(text: str) -> list[float]:
                 pass
     return vals
 
-
-def parse_ram_mb(text: str) -> Optional[int]:
-    # Prefer an explicit "RAM" expression.
-    m = re.search(r"(\d+(?:\.\d+)?)\s*(GB|MB)\s*(?:ECC\s*)?RAM\b", text, re.I)
-    if not m:
-        m = re.search(r"\bRAM\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*(GB|MB)\b", text, re.I)
-    if not m:
-        # Common DMIT cards show "1GB" or "2GB" without "RAM".
-        m = re.search(r"\b(\d+(?:\.\d+)?)\s*GB\b", text, re.I)
-    if not m:
-        return None
-    val = float(m.group(1))
-    unit = m.group(2).upper() if len(m.groups()) >= 2 else "GB"
-    return int(val * 1024) if unit == "GB" else int(val)
-
-
-def has_cn2_gia(text: str) -> bool:
-    low = text.lower()
-    return (
-        "cn2 gia" in low
-        or "cn2-gia" in low
-        or "ctgnet" in low
-        or "as4809" in low
-        or "as23764" in low
-    )
-
-
-def has_dedicated_ipv4(text: str) -> bool:
-    low = text.lower()
+def parse_ram_mb(text: str):
     patterns = (
-        "1 dedicated ipv4",
-        "1 dedicated ipv4 address",
-        "ipv4: 1 dedicated",
-        "ipv4 1 dedicated",
-        "1 x ipv4",
-        "1 ipv4",
-        "dedicated ipv4",
+        r"(\d+(?:\.\d+)?)\s*(GB|MB)\s*(?:ECC\s*)?RAM\b",
+        r"\bRAM\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*(GB|MB)\b",
+        r"\b(\d+(?:\.\d+)?)\s*(GB|MB)\b",
     )
-    return any(p in low for p in patterns)
+    for pat in patterns:
+        m = re.search(pat, text, re.I)
+        if m:
+            val = float(m.group(1))
+            return int(val * 1024) if m.group(2).upper() == "GB" else int(val)
+    return None
 
-
-def looks_orderable(text: str) -> bool:
+def has_cn2_gia(text: str):
     low = text.lower()
-    bad = ("out of stock", "sold out", "0 available", "currently unavailable")
-    if any(x in low for x in bad):
+    return any(x in low for x in ("cn2 gia", "cn2-gia", "ctgnet", "as23764", "as4809"))
+
+def has_dedicated_ipv4(text: str):
+    low = text.lower()
+    return any(x in low for x in (
+        "1 dedicated ipv4", "dedicated ipv4", "1 x ipv4",
+        "1 ipv4", "1 ipv4 &", "1 ipv4 +"
+    ))
+
+def looks_orderable(text: str):
+    low = text.lower()
+    if any(x in low for x in ("out of stock", "sold out", "0 available", "currently unavailable")):
         return False
-    good = ("order now", "add to cart", "configure", "continue", "buy now", "available")
-    return any(x in low for x in good)
+    return any(x in low for x in ("order now", "add to cart", "configure", "continue", "buy now", "available"))
 
-
-def parse_coupon(text: str) -> str:
-    patterns = [
+def parse_coupon(text: str):
+    for pat in (
         r"(?:coupon\s*code|promo\s*code|promocode|coupon)\s*[:：]?\s*([A-Z0-9]{5,30})",
         r"promocode=([A-Z0-9]{5,30})",
-    ]
-    for pat in patterns:
+    ):
         m = re.search(pat, text, re.I)
         if m:
             return m.group(1).upper()
     return ""
 
-
-def parse_recurring(text: str) -> Optional[bool]:
+def parse_recurring(text: str):
     low = text.lower()
     if "recurring" in low:
         return True
@@ -277,31 +237,21 @@ def parse_recurring(text: str) -> Optional[bool]:
         return False
     return None
 
-
-def parse_hostdare_rss() -> dict:
+def parse_hostdare_rss():
     url = SOURCES["hostdare_rss"]
     out = {
-        "provider": "HostDare",
-        "source": url,
-        "ok": False,
-        "blocked": False,
-        "status": None,
-        "items_scanned": 0,
-        "recent_items_scanned": 0,
-        "offers": [],
-        "error": None,
+        "provider": "HostDare", "source": url, "ok": False, "blocked": False,
+        "status": None, "items_scanned": 0, "recent_items_scanned": 0,
+        "offers": [], "error": None
     }
-
     try:
         r = requests.get(url, headers=HEADERS, timeout=25, allow_redirects=True)
         out["status"] = r.status_code
-        body_text = r.text[:5000]
-        if blocked_by_cloudflare(r.status_code, body_text):
+        if blocked_by_cloudflare(r.status_code, r.text[:5000]):
             out["blocked"] = True
             out["error"] = "RSS blocked by Cloudflare"
             return out
         r.raise_for_status()
-
         root = ET.fromstring(r.content)
         items = root.findall(".//item")
         out["items_scanned"] = len(items)
@@ -312,7 +262,6 @@ def parse_hostdare_rss() -> dict:
             link = (item.findtext("link") or "").strip()
             desc = item.findtext("description") or ""
             pub = (item.findtext("pubDate") or "").strip()
-
             try:
                 dt = email.utils.parsedate_to_datetime(pub)
                 if dt.tzinfo is None:
@@ -320,259 +269,241 @@ def parse_hostdare_rss() -> dict:
                 if dt < cutoff:
                     continue
             except Exception:
-                # If date cannot be parsed, skip instead of risking a historical false alert.
                 continue
 
             out["recent_items_scanned"] += 1
             text = f"{title} {normalize_text(desc)}"
-
             if not has_cn2_gia(text):
                 continue
 
             coupon = parse_coupon(text)
             recurring = parse_recurring(text)
-
-            # Parse plan sections such as:
-            # CSSD1 ... 1 GB RAM ... $36.39/year
-            family_pat = r"\b(CSSD\d+|CAMD\d+|CKVM\d+)\b"
-            matches = list(re.finditer(family_pat, text, re.I))
+            matches = list(re.finditer(r"\b(CSSD\d+|CAMD\d+|CKVM\d+)\b", text, re.I))
             for i, m in enumerate(matches):
                 start = m.start()
-                end = matches[i + 1].start() if i + 1 < len(matches) else min(len(text), start + 1800)
+                end = matches[i+1].start() if i+1 < len(matches) else min(len(text), start+1800)
                 seg = text[start:end]
                 plan = m.group(1).upper()
-
                 ram = parse_ram_mb(seg)
                 prices = parse_usd_annual(seg)
                 if ram is None or not prices:
                     continue
-
                 price = min(prices)
-                # HostDare's official KVM China-optimized families include a dedicated IPv4.
                 dedicated = plan.startswith(HOSTDARE_DEDICATED_IPV4_FAMILIES)
-
-                order_url = link or url
-                um = re.search(r"https?://bill\.hostdare\.com/[^\s<>\"']+", seg, re.I)
-                if um:
-                    order_url = um.group(0).rstrip(".,;)")
-
                 offer = Offer(
-                    provider="HostDare",
-                    plan=plan,
-                    annual_usd=price,
-                    ram_mb=ram,
-                    dedicated_ipv4=dedicated,
-                    cn2_gia=True,
-                    orderable=True,  # New recent official promo announcement is treated as live.
-                    url=order_url,
-                    source=url,
-                    coupon=coupon,
-                    recurring=recurring,
-                    note=f"Official announcement within {RECENT_ANNOUNCEMENT_DAYS} days",
+                    "HostDare", plan, price, ram, dedicated, True, True,
+                    link or url, url, coupon, recurring,
+                    f"Official announcement within {RECENT_ANNOUNCEMENT_DAYS} days"
                 )
                 if offer.qualifies():
                     out["offers"].append(asdict(offer) | {"key": offer.key})
-
         out["ok"] = True
         return out
     except Exception as e:
         out["error"] = f"{type(e).__name__}: {e}"
         return out
 
-
-def parse_hostdare_product_pages() -> dict:
-    """
-    Product pages are used primarily for health/stock corroboration.
-    They are often Cloudflare-blocked from GitHub Actions, so failure here
-    does not invalidate the RSS monitor.
-    """
-    results = []
+def hostdare_product_health():
+    rows = []
     for key in ("hostdare_cssd", "hostdare_camd"):
         f = fetch(SOURCES[key])
-        results.append({
-            "url": f["url"],
-            "ok": f["ok"],
-            "blocked": f["blocked"],
-            "status": f["status"],
-            "title": f["title"],
-            "error": f["error"],
-        })
-    return {"pages": results}
+        rows.append({k: f[k] for k in ("url","ok","blocked","status","title","error")})
+    return {"pages": rows}
 
+# ---------------- DMIT v2.1.0 ----------------
 
-def extract_candidate_windows(text: str, annual_marker=r"Annually") -> list[str]:
+def dmit_network_sections(text: str):
+    """
+    Split official DMIT content into named network sections.
+    This is the key anti-false-positive layer:
+    a cheap Tier 1 plan must never inherit "CN2 GIA" text from another section.
+    """
+    markers = [
+        ("Premium Network", "premium"),
+        ("Premium 網路", "premium"),
+        ("Tier 1 Network", "tier1"),
+        ("Tier 1 網路", "tier1"),
+        ("Eyeball Network", "eyeball"),
+        ("Eyeball 網路", "eyeball"),
+    ]
+    points = []
+    low = text.lower()
+    for label, kind in markers:
+        pos = 0
+        needle = label.lower()
+        while True:
+            idx = low.find(needle, pos)
+            if idx < 0:
+                break
+            points.append((idx, label, kind))
+            pos = idx + len(needle)
+    points.sort()
+
+    sections = []
+    for i, (idx, label, kind) in enumerate(points):
+        end = points[i+1][0] if i+1 < len(points) else len(text)
+        seg = text[idx:end]
+        sections.append((label, kind, seg))
+    return sections
+
+def dmit_offer_windows(section: str):
+    # Annual plans are the only ones relevant to <= $50/year.
     windows = []
-    for m in re.finditer(annual_marker, text, re.I):
-        s = max(0, m.start() - 1800)
-        e = min(len(text), m.end() + 800)
-        windows.append(text[s:e])
+    for m in re.finditer(r"\$\s*(\d+(?:\.\d{1,2})?)\s*/?\s*Annually|(\d+(?:\.\d{1,2})?)\s*USD\s*Annually", section, re.I):
+        s = max(0, m.start()-500)
+        e = min(len(section), m.end()+500)
+        windows.append(section[s:e])
     return windows
 
-
-def parse_dmit() -> dict:
-    url = SOURCES["dmit_pricing"]
+def parse_dmit_page(source_name: str, url: str):
     f = fetch(url)
-    out = {
-        "provider": "DMIT",
-        "source": url,
-        "ok": f["ok"],
-        "blocked": f["blocked"],
-        "status": f["status"],
-        "offers": [],
-        "error": f["error"],
+    row = {
+        "name": source_name, "url": url, "ok": f["ok"], "blocked": f["blocked"],
+        "status": f["status"], "title": f["title"], "offers": [], "error": f["error"]
     }
     if not f["ok"]:
-        return out
+        return row
 
-    text = f["text"]
-
-    # Critical anti-false-positive rule:
-    # DMIT has Tier 1 (T1) products that are NOT China-specific.
-    # Only a local window that itself says CN2 GIA / CTGNet is accepted.
-    for seg in extract_candidate_windows(text, annual_marker=r"Annually"):
-        if not has_cn2_gia(seg):
+    for label, kind, section in dmit_network_sections(f["text"]):
+        if kind != "premium":
             continue
 
-        prices = parse_usd_annual(seg)
-        ram = parse_ram_mb(seg)
-        if not prices or ram is None:
+        # Premium section itself must explicitly say CN2 GIA/CTGNet.
+        if not has_cn2_gia(section):
             continue
 
-        # Try to capture the closest plan label before the annual price.
-        pm = re.findall(r"\b([A-Z][A-Z0-9._-]{2,30})\b", seg)
-        plan = pm[-1] if pm else "DMIT-PREMIUM"
+        for seg in dmit_offer_windows(section):
+            prices = parse_usd_annual(seg)
+            ram = parse_ram_mb(seg)
+            if not prices or ram is None:
+                continue
+            price = min(prices)
 
-        dedicated = has_dedicated_ipv4(seg)
-        # If the card doesn't repeat IPv4 wording, do not infer it.
-        if not dedicated:
-            continue
+            # DMIT official product cards usually say "1 IPv4 & 1 IPv6 /64".
+            dedicated = has_dedicated_ipv4(seg)
+            if not dedicated:
+                continue
 
-        orderable = looks_orderable(seg)
-        price = min(prices)
+            # Plan name nearest to this card.
+            plan = "DMIT Premium"
+            # Capture likely plan IDs / names before resources.
+            candidates = re.findall(r"\b(?:PVM\.[A-Z0-9._-]+|[A-Z][A-Z0-9._-]{2,32})\b", seg)
+            skip = {"GB","SSD","USD","RAM","CN2","GIA","IPV4","IPV6","MAX","OUT","IN"}
+            candidates = [x for x in candidates if x.upper() not in skip]
+            if candidates:
+                plan = candidates[-1]
 
-        offer = Offer(
-            provider="DMIT",
-            plan=plan,
-            annual_usd=price,
-            ram_mb=ram,
-            dedicated_ipv4=True,
-            cn2_gia=True,
-            orderable=orderable,
-            url=url,
-            source=url,
-            note="Accepted only when the local pricing block confirms CN2 GIA and dedicated IPv4",
-        )
-        if offer.qualifies():
-            out["offers"].append(asdict(offer) | {"key": offer.key})
+            orderable = looks_orderable(seg)
+            offer = Offer(
+                "DMIT", plan, price, ram, True, True, orderable,
+                url, url, note=f"Official {label} section from {source_name}"
+            )
+            if offer.qualifies():
+                row["offers"].append(asdict(offer) | {"key": offer.key})
+    # dedupe
+    row["offers"] = list({o["key"]: o for o in row["offers"]}.values())
+    return row
 
-    return out
+def parse_dmit_announcements():
+    url = SOURCES["dmit_announcements"]
+    f = fetch(url)
+    return {
+        "name": "announcements", "url": url, "ok": f["ok"], "blocked": f["blocked"],
+        "status": f["status"], "title": f["title"], "offers": [],
+        "error": f["error"]
+    }
 
+def parse_dmit_multi():
+    names = (
+        ("pricing", SOURCES["dmit_pricing"]),
+        ("pricing_en", SOURCES["dmit_pricing_en"]),
+        ("lax", SOURCES["dmit_lax"]),
+        ("lax_en", SOURCES["dmit_lax_en"]),
+    )
+    source_rows = [parse_dmit_page(n, u) for n, u in names]
+    source_rows.append(parse_dmit_announcements())
 
-def parse_bandwagon() -> dict:
+    all_offers = {}
+    for row in source_rows:
+        for o in row["offers"]:
+            all_offers[o["key"]] = o
+
+    healthy = [r for r in source_rows if r["ok"]]
+    return {
+        "provider": "DMIT",
+        "ok": bool(healthy),
+        "degraded": bool(healthy) and len(healthy) < len(source_rows),
+        "healthy_sources": len(healthy),
+        "total_sources": len(source_rows),
+        "sources": source_rows,
+        "offers": list(all_offers.values()),
+        "error": None if healthy else "All official DMIT sources are unreadable",
+    }
+
+# ---------------- BandwagonHost ----------------
+
+def parse_bandwagon():
     url = SOURCES["bandwagon_cart"]
     f = fetch(url)
     out = {
-        "provider": "BandwagonHost",
-        "source": url,
-        "ok": f["ok"],
-        "blocked": f["blocked"],
-        "status": f["status"],
-        "offers": [],
-        "error": f["error"],
+        "provider": "BandwagonHost", "source": url, "ok": f["ok"],
+        "blocked": f["blocked"], "status": f["status"], "offers": [],
+        "error": f["error"]
     }
     if not f["ok"]:
         return out
 
     soup = BeautifulSoup(f["html"], "html.parser")
-
-    # WHMCS product cards vary by template. Gather medium-sized text containers
-    # that have an annual price and then deduplicate by content.
-    chunks = []
-    selectors = [
-        ".product",
-        ".product-info",
-        ".package",
-        ".package-name",
-        ".panel",
-        ".card",
-        ".products .product",
-        "form",
-    ]
-    seen = set()
-    for sel in selectors:
+    chunks, seen = [], set()
+    for sel in (".product",".product-info",".package",".panel",".card",".products .product","form"):
         for node in soup.select(sel):
             text = re.sub(r"\s+", " ", node.get_text(" ", strip=True))
             if len(text) < 80 or len(text) > 7000:
                 continue
             if "Annually" not in text and "/year" not in text.lower():
                 continue
-            digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-            if digest not in seen:
-                seen.add(digest)
+            dig = hashlib.sha256(text.encode()).hexdigest()
+            if dig not in seen:
+                seen.add(dig)
                 chunks.append((node, text))
 
-    # Fallback to annual-price windows if template selectors did not work.
     if not chunks:
-        for seg in extract_candidate_windows(f["text"], annual_marker=r"Annually"):
-            chunks.append((None, seg))
+        text = f["text"]
+        for m in re.finditer(r"Annually", text, re.I):
+            chunks.append((None, text[max(0,m.start()-1800):min(len(text),m.end()+800)]))
 
     for node, seg in chunks:
         if not has_cn2_gia(seg):
             continue
-
         ram = parse_ram_mb(seg)
         prices = parse_usd_annual(seg)
-        if ram is None or not prices:
+        if ram is None or not prices or not has_dedicated_ipv4(seg):
             continue
-
-        dedicated = has_dedicated_ipv4(seg)
-        if not dedicated:
-            continue
-
         price = min(prices)
-        orderable = looks_orderable(seg)
-
-        # Product name: prefer a heading; otherwise first text before "SSD:".
         plan = "BandwagonHost CN2 GIA"
         if node is not None:
-            heading = node.find(["h1", "h2", "h3", "h4", "h5", "strong"])
-            if heading:
-                candidate = re.sub(r"\s+", " ", heading.get_text(" ", strip=True))
+            h = node.find(["h1","h2","h3","h4","h5","strong"])
+            if h:
+                candidate = re.sub(r"\s+", " ", h.get_text(" ", strip=True))
                 if candidate:
                     plan = candidate[:180]
-        if plan == "BandwagonHost CN2 GIA":
-            m = re.search(r"([A-Z0-9][A-Z0-9 ._-]{5,120}(?:VPS|PROMO|BOX|PLAN))", seg, re.I)
-            if m:
-                plan = m.group(1).strip()[:180]
-
         offer = Offer(
-            provider="BandwagonHost",
-            plan=plan,
-            annual_usd=price,
-            ram_mb=ram,
-            dedicated_ipv4=True,
-            cn2_gia=True,
-            orderable=orderable,
-            url=url,
-            source=url,
-            note="Official BandwagonHost cart page",
+            "BandwagonHost", plan, price, ram, True, True,
+            looks_orderable(seg), url, url, note="Official BandwagonHost cart page"
         )
         if offer.qualifies():
             out["offers"].append(asdict(offer) | {"key": offer.key})
-
-    # Deduplicate identical keys.
-    unique = {}
-    for o in out["offers"]:
-        unique[o["key"]] = o
-    out["offers"] = list(unique.values())
+    out["offers"] = list({o["key"]: o for o in out["offers"]}.values())
     return out
 
+# ---------------- State / alerting ----------------
 
-def load_state() -> dict:
+def load_state():
     default = {
         "initialized": False,
         "active_keys": [],
         "seen_keys": [],
+        "provider_active": {},
         "updated_at": None,
     }
     if not STATE_FILE.exists():
@@ -581,88 +512,69 @@ def load_state() -> dict:
         data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             return default
-        for k, v in default.items():
-            data.setdefault(k, v)
+        for k,v in default.items():
+            data.setdefault(k,v)
         return data
     except Exception:
         return default
 
-
-def save_state(initialized: bool, active_keys: set[str], seen_keys: set[str]) -> None:
-    data = {
+def save_state(initialized, active_keys, seen_keys, provider_active):
+    STATE_FILE.write_text(json.dumps({
         "initialized": initialized,
         "active_keys": sorted(active_keys),
         "seen_keys": sorted(seen_keys),
+        "provider_active": {k: sorted(v) for k,v in provider_active.items()},
         "updated_at": now_iso(),
-    }
-    STATE_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-
-def provider_healthy(result: dict) -> bool:
-    return bool(result.get("ok"))
-
-
-def main() -> int:
+def main():
     state = load_state()
-    initialized = bool(state.get("initialized"))
-    old_active = set(state.get("active_keys", []))
-    seen = set(state.get("seen_keys", []))
+    initialized = bool(state["initialized"])
+    seen = set(state["seen_keys"])
+    old_provider_active = {k:set(v) for k,v in state.get("provider_active",{}).items()}
 
     hostdare = parse_hostdare_rss()
-    hostdare_pages = parse_hostdare_product_pages()
-    dmit = parse_dmit()
+    hd_pages = hostdare_product_health()
+    dmit = parse_dmit_multi()
     bandwagon = parse_bandwagon()
 
-    providers = [hostdare, dmit, bandwagon]
-
-    current_by_provider = {}
-    all_current = {}
-    for p in providers:
-        provider = p["provider"]
-        offers = p.get("offers", [])
-        keys = {o["key"] for o in offers}
-        current_by_provider[provider] = keys
-        for o in offers:
-            all_current[o["key"]] = o
-
-    # Preserve previous active keys for unreadable providers so a transient block
-    # cannot look like "sold out" and then create a false restock later.
-    effective_active = set()
-    provider_prefix_map = {
-        "HostDare": None,
-        "DMIT": None,
-        "BandwagonHost": None,
+    providers = {
+        "HostDare": hostdare,
+        "DMIT": dmit,
+        "BandwagonHost": bandwagon,
     }
 
-    # We don't encode provider name directly in the hash key, so preserve old keys
-    # only when a provider is unreadable by using seen/current semantics conservatively.
-    # If any provider is unreadable, old active keys remain in effective_active.
-    if any(not provider_healthy(p) for p in providers):
-        effective_active |= old_active
+    all_current = {}
+    provider_active = {}
 
-    for keys in current_by_provider.values():
-        effective_active |= keys
+    for name, result in providers.items():
+        if result.get("ok"):
+            keys = set()
+            for o in result.get("offers", []):
+                keys.add(o["key"])
+                all_current[o["key"]] = o
+            provider_active[name] = keys
+        else:
+            # Preserve last-known-good state while provider is unreadable.
+            provider_active[name] = old_provider_active.get(name, set())
 
-    healthy_count = sum(1 for p in providers if provider_healthy(p))
+    effective_active = set().union(*provider_active.values()) if provider_active else set()
+    healthy_count = sum(1 for x in providers.values() if x.get("ok"))
     baseline_mode = not initialized
 
     if baseline_mode:
         if healthy_count >= 1:
             seen |= effective_active
-            save_state(True, effective_active, seen)
-            new_hits = []
-            baseline_created = True
+            save_state(True, effective_active, seen, provider_active)
+            new_hits, baseline_created = [], True
         else:
-            save_state(False, old_active, seen)
-            new_hits = []
-            baseline_created = False
+            save_state(False, set(state["active_keys"]), seen, old_provider_active)
+            new_hits, baseline_created = [], False
     else:
-        # Alert only when an offer is currently qualifying and we have never alerted/seen it.
         new_keys = {k for k in effective_active if k in all_current and k not in seen}
         new_hits = [all_current[k] for k in sorted(new_keys)]
         seen |= new_keys
-        # Keep previously seen keys forever to avoid repeat alerts.
-        save_state(True, effective_active, seen)
+        save_state(True, effective_active, seen, provider_active)
         baseline_created = False
 
     report = {
@@ -676,52 +588,43 @@ def main() -> int:
         },
         "baseline_mode": baseline_mode,
         "baseline_created": baseline_created,
-        "initialized_before_run": initialized,
         "new_hits": new_hits,
         "current_qualifying_offers": list(all_current.values()),
         "providers": {
             "HostDare": hostdare,
-            "HostDare_product_pages": hostdare_pages,
+            "HostDare_product_pages": hd_pages,
             "DMIT": dmit,
             "BandwagonHost": bandwagon,
         },
         "health": {
             "healthy_provider_sources": healthy_count,
-            "total_provider_sources": len(providers),
-            "hostdare_rss_ok": hostdare.get("ok"),
+            "total_provider_sources": 3,
+            "hostdare_ok": hostdare.get("ok"),
             "dmit_ok": dmit.get("ok"),
+            "dmit_healthy_official_sources": dmit.get("healthy_sources"),
+            "dmit_total_official_sources": dmit.get("total_sources"),
             "bandwagon_ok": bandwagon.get("ok"),
-        },
+        }
     }
-
-    REPORT_FILE.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    REPORT_FILE.write_text(json.dumps(report, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
     if baseline_mode and baseline_created:
-        print("\n[BASELINE] Existing qualifying offers recorded. No email alert on initialization.")
+        print("\n[BASELINE] Existing qualifying offers recorded; no historical alert.")
         return 0
-
     if new_hits:
-        print("\n" + "!" * 78)
+        print("\n" + "!"*78)
         print("CN2 GIA DEAL FOUND")
         for h in new_hits:
-            print(
-                f"- {h['provider']} | {h['plan']} | "
-                f"${h['annual_usd']:.2f}/yr | RAM {h['ram_mb']} MB"
-            )
-            if h.get("coupon"):
-                print(f"  Coupon: {h['coupon']}")
+            print(f"- {h['provider']} | {h['plan']} | ${h['annual_usd']:.2f}/yr | RAM {h['ram_mb']}MB")
             print(f"  {h['url']}")
-        print("!" * 78)
+        print("!"*78)
         return 42
-
     if healthy_count == 0:
-        print("\n[WARN] All provider sources unreadable. State preserved; no alert.")
+        print("\n[WARN] All providers unreadable; state preserved.")
     else:
         print("\n[OK] No new qualifying offer.")
-
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
