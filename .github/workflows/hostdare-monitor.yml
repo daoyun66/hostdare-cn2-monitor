@@ -2,25 +2,38 @@ name: HostDare CN2 GIA Deal Monitor
 
 "on":
   schedule:
+    # UTC xx:11 / xx:41, about every 30 minutes.
     - cron: "11,41 * * * *"
   workflow_dispatch: {}
+
 permissions:
   contents: write
+
 concurrency:
   group: hostdare-cn2-monitor
   cancel-in-progress: false
+
 jobs:
   monitor:
+    name: "HostDare CN2 GIA monitor"
     runs-on: ubuntu-latest
     timeout-minutes: 5
+
     steps:
-      - uses: actions/checkout@v4
-        with: {fetch-depth: 0}
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
       - name: Check HostDare
         id: check
         shell: bash
@@ -30,27 +43,48 @@ jobs:
           CODE=$?
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
           exit 0
-      - name: Save state
+
+      - name: Persist state
         shell: bash
         run: |
           MONTH="$(date -u +%Y-%m)"
-          [ -f .heartbeat ] && [ "$(cat .heartbeat)" = "$MONTH" ] || printf "%s\n" "$MONTH" > .heartbeat
+          if [ ! -f .heartbeat ] || [ "$(cat .heartbeat)" != "$MONTH" ]; then
+            printf "%s\n" "$MONTH" > .heartbeat
+          fi
+
           if ! git diff --quiet -- state.json .heartbeat; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add state.json .heartbeat
-            git commit -m "chore: update monitor state [skip ci]"
+            git commit -m "chore: update HostDare monitor state [skip ci]"
             git push
+          else
+            echo "No state change."
           fi
-      - name: Trigger email notification
-        if: steps.check.outputs.code == '42'
-        run: |
-          echo "::error title=HostDare CN2 GIA DEAL FOUND::New >=30% deal or CSSD1/CAMD1 restock detected."
-          exit 1
-      - name: Summary
-        if: always()
-        run: |
-          echo "## HostDare CN2 GIA Monitor" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Trigger: >=30% CN2 GIA promotion OR CSSD1/CAMD1 restock" >> "$GITHUB_STEP_SUMMARY"
-          [ -f last_check.json ] && { echo '```json' >> "$GITHUB_STEP_SUMMARY"; cat last_check.json >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"; }
 
+      - name: Trigger GitHub native email alert
+        if: steps.check.outputs.code == '42'
+        shell: bash
+        run: |
+          echo "::error title=HostDare CN2 GIA DEAL FOUND::New >=30% official deal or CSSD1/CAMD1 restock detected. Open the workflow summary."
+          exit 1
+
+      - name: Monitor summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## HostDare CN2 GIA Monitor v1.1.0"
+            echo ""
+            echo "- Primary: official RSS promotion feed"
+            echo "- Alert A: CN2/CN2 GIA official promotion >= 30%"
+            echo "- Alert B: CSSD1/CAMD1 restock, only when product page is readable"
+            echo "- Cloudflare 403 does **not** mean out of stock"
+            echo "- Check result code: \`${{ steps.check.outputs.code }}\`"
+            echo ""
+            if [ -f last_check.json ]; then
+              echo '```json'
+              cat last_check.json
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
