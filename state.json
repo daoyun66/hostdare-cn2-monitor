@@ -1,6 +1,10 @@
 {
-  "initialized": false,
+  "initialized": true,
   "seen_keys": [],
-  "provider_active": {},
-  "updated_at": null
+  "provider_active": {
+    "HostDare": [],
+    "DMIT": [],
+    "BandwagonHost": []
+  },
+  "updated_at": "2026-09-25T10:39:58.338913+00:00"
 }
