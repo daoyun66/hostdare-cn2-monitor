@@ -15,17 +15,17 @@ concurrency:
 jobs:
   monitor:
     name: "HostDare + DMIT + BandwagonHost"
-    runs-on: ubuntu-latest
-    timeout-minutes: 6
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -73,18 +73,15 @@ jobs:
         shell: bash
         run: |
           {
-            echo "## CN2 GIA Multi-Provider Monitor v2.0.0"
+            echo "## CN2 GIA Multi-Provider Monitor v2.1.0"
             echo ""
-            echo "**Providers:** HostDare + DMIT + BandwagonHost"
+            echo "**Hard filter:** CN2 GIA / CTGNet + RAM >= 1GB + Dedicated IPv4 + annual <= \$50"
             echo ""
-            echo "**Hard filter:**"
-            echo "- CN2 GIA / CTGNet"
-            echo "- RAM >= 1 GB"
-            echo "- Dedicated IPv4"
-            echo "- Annual price <= \$50"
+            echo "**DMIT v2.1.0 fallback:** pricing + localized pricing + LAX location pages + announcements"
             echo ""
-            echo "- First healthy run creates baseline and never sends a historical alert."
-            echo "- Cloudflare / unreadable pages never mean out of stock."
+            echo "- Tier 1 is explicitly excluded from CN2 GIA matching."
+            echo "- If every DMIT official source is blocked, the last-known-good DMIT state is preserved."
+            echo "- First healthy run creates a baseline and does not alert."
             echo "- Result code: \`${{ steps.check.outputs.code }}\`"
             echo ""
             if [ -f last_check.json ]; then
