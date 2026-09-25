@@ -16,7 +16,7 @@ jobs:
   monitor:
     name: "HostDare + DMIT + BandwagonHost"
     runs-on: ubuntu-24.04
-    timeout-minutes: 7
+    timeout-minutes: 8
 
     steps:
       - name: Checkout
@@ -32,6 +32,9 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      - name: Parser self-test
+        run: python monitor.py --self-test
 
       - name: Check CN2 GIA deals
         id: check
@@ -65,7 +68,7 @@ jobs:
         if: steps.check.outputs.code == '42'
         shell: bash
         run: |
-          echo "::error title=CN2 GIA DEAL FOUND::A NEW qualifying HostDare / DMIT / BandwagonHost offer was detected. Open the workflow Summary."
+          echo "::error title=CN2 GIA DEAL FOUND::New qualifying offer/candidate detected. Open Summary. VERIFIED = direct official source; CANDIDATE = search fallback pointing to official DMIT."
           exit 1
 
       - name: Write monitor summary
@@ -73,15 +76,17 @@ jobs:
         shell: bash
         run: |
           {
-            echo "## CN2 GIA Multi-Provider Monitor v2.1.0"
+            echo "## CN2 GIA Multi-Provider Monitor v2.2.0 Stable"
             echo ""
             echo "**Hard filter:** CN2 GIA / CTGNet + RAM >= 1GB + Dedicated IPv4 + annual <= \$50"
             echo ""
-            echo "**DMIT v2.1.0 fallback:** pricing + localized pricing + LAX location pages + announcements"
+            echo "**DMIT fallback chain:** official direct pages -> current promo pages -> Bing RSS discovery pointing only to dmit.io"
             echo ""
-            echo "- Tier 1 is explicitly excluded from CN2 GIA matching."
-            echo "- If every DMIT official source is blocked, the last-known-good DMIT state is preserved."
-            echo "- First healthy run creates a baseline and does not alert."
+            echo "- VERIFIED = direct official source confirms the offer."
+            echo "- CANDIDATE = direct DMIT blocked; all hard-filter evidence appears in a search result linking to dmit.io. Open the official URL before purchase."
+            echo "- Tier 1 / .T1. is excluded."
+            echo "- 403/unreadable never means out of stock."
+            echo "- First healthy run creates a baseline."
             echo "- Result code: \`${{ steps.check.outputs.code }}\`"
             echo ""
             if [ -f last_check.json ]; then
