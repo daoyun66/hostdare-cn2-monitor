@@ -44,7 +44,7 @@ BLOCKED_WORDS = ("out of stock", "sold out", "no stock", "discontinued",
                  "expired", "promotion ended", "offer ended", "not available")
 IPV6_RE = re.compile(r"\bipv6[ -]?only\b|\bonly[ -]?ipv6\b|\bv6[ -]?only\b", re.I)
 IPV4_RE = re.compile(r"\b(?:dedicated|included|free|public|one|1|1x|1 x)\s*(?:x\s*)?ipv4\b|\bdual[ -]?stack\b|\bipv4\s*\+\s*ipv6\b", re.I)
-RAM_RE = re.compile(r"\b(\d+(?:\.\d+)?)\s*(GB|GIB|MB|MIB)\s*(?:DDR\d?\s*)?(?:RAM|MEMORY)?\b|\b(?:RAM|MEMORY)\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*(GB|GIB|MB|MIB)\b", re.I)
+RAM_RE = re.compile(r"\b(\d+(?:\.\d+)?)\s*(GB|GIB|MB|MIB)\s*(?:DDR\d?\s*)?(?:RAM|MEMORY)\b|\b(?:RAM|MEMORY)\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*(GB|GIB|MB|MIB)\b", re.I)
 PRICE_RE = re.compile(r"(?:USD\s*|US\s*\$\s*|\$\s*)(\d+(?:\.\d{1,2})?)\s*(?:USD\s*)?(?:/|per\s+|a\s+|\s+)(?:year|yr|annum|annually|yearly)\b|\b(?:yearly|annually|annual)\s*(?:price|from|at|:)\s*(?:USD\s*|\$\s*)(\d+(?:\.\d{1,2})?)", re.I)
 DATE_RE = re.compile(r"(?:202[0-9])")
 
