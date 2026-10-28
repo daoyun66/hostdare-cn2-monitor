@@ -49,7 +49,7 @@ jobs:
         if: steps.scan.outputs.code == '0' || steps.scan.outputs.code == '42'
         shell: bash
         run: |
-          if ! git diff --quiet -- ipv6_state.json; then
+          if [ -n "$(git status --porcelain -- ipv6_state.json)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add ipv6_state.json
