@@ -1,0 +1,95 @@
+name: Daily IPv6-only VPS Deal Monitor
+
+"on":
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ipv6-only-vps-daily-monitor
+  cancel-in-progress: false
+
+jobs:
+  ipv6-deals:
+    name: "IPv6-only VPS - max 20 USD per year and min 1 GB RAM"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Parser self-test
+        run: python ipv6_monitor.py --self-test
+
+      - name: Search daily IPv6-only VPS offers
+        id: scan
+        shell: bash
+        run: |
+          set +e
+          python ipv6_monitor.py
+          CODE=$?
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Persist IPv6-only monitor state
+        if: steps.scan.outputs.code == '0' || steps.scan.outputs.code == '42'
+        shell: bash
+        run: |
+          if ! git diff --quiet -- ipv6_state.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add ipv6_state.json
+            git commit -m "chore: update IPv6-only VPS seen offers [skip ci]"
+            git push
+          else
+            echo "No IPv6 state change."
+          fi
+
+      - name: Write IPv6 deals summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## IPv6-only VPS Daily Search"
+            echo ""
+            echo "- IPv6-only (not IPv4 + IPv6 / dual-stack)"
+            echo "- At least 1024 MB RAM"
+            echo "- Annual billed price up to USD 20"
+            echo "- All regions; direct merchant offers and recent search candidates"
+            echo "- New offers are deduplicated using ipv6_state.json"
+            echo "- Official-page = parsed from merchant page; search-candidate = unverified search excerpt"
+            echo "- Check live ordering page, renewal terms and stock before purchasing."
+            echo ""
+            if [ -f ipv6_last_check.json ]; then
+              echo '### Latest results'
+              echo '~~~json'
+              cat ipv6_last_check.json
+              echo '~~~'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Notify by native GitHub Actions failure email
+        if: steps.scan.outputs.code == '42'
+        shell: bash
+        run: |
+          echo "::error title=NEW IPv6-only VPS DEAL::New IPv6-only VPS offer or search candidate found. See the Actions run summary for prices and merchant links."
+          exit 1
+
+      - name: Signal unavailable sources
+        if: steps.scan.outputs.code == '2'
+        run: |
+          echo "::warning title=IPv6 MONITOR UNAVAILABLE::All sources failed; no offers were recorded."
